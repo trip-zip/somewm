@@ -75,6 +75,9 @@
 
 /* Module-private state */
 static unsigned int cursor_mode;
+/* Where the surface with pointer focus has its origin in the layout. Only
+ * pointerfocus() writes it, so it holds for a focus that function gave. */
+static double pointer_focus_origin_x, pointer_focus_origin_y;
 static bool gesture_swipe_consumed = false;
 static bool gesture_pinch_consumed = false;
 static bool gesture_hold_consumed = false;
@@ -342,6 +345,169 @@ gestureholdend(struct wl_listener *listener, void *data)
 	gesture_hold_consumed = false;
 }
 
+/* Who a pointer button belongs to. A press, a release and a scroll tick all
+ * ask pointer_owner_at(), so they cannot disagree about a target. */
+enum pointer_owner_kind {
+	OWNER_NONE,     /* no bindings fire */
+	OWNER_DESKTOP,  /* nothing under the pointer: root bindings */
+	OWNER_DRAWIN,   /* a wibox: its signals and its buttons */
+	OWNER_CLIENT,   /* a window or its titlebar: client signals and buttons */
+	OWNER_FOREIGN,  /* a layer surface, or an X11 window that does not want
+	                 * focus (a menu, a tooltip): no bindings */
+};
+
+struct pointer_owner {
+	enum pointer_owner_kind kind;
+	Client *c;              /* the client under the pointer, whatever the kind */
+	drawable_t *titlebar;   /* the titlebar of c under the pointer, if any */
+	drawin_t *drawin;
+	LayerSurface *l;
+	struct wlr_surface *surface;
+	double sx, sy;
+};
+
+static struct pointer_owner
+pointer_owner_at(double x, double y)
+{
+	struct declare_hit hit;
+	struct pointer_owner o = {0};
+
+	declare_hit_at(x, y, &hit);
+	o.surface = hit.surface;
+	o.sx = hit.sx;
+	o.sy = hit.sy;
+	switch (hit.kind) {
+	case DECLARE_KIND_DRAWIN:
+		o.kind = OWNER_DRAWIN;
+		o.drawin = hit.object;
+		break;
+	case DECLARE_KIND_TITLEBAR:
+		o.kind = OWNER_CLIENT;
+		o.titlebar = hit.object;
+		o.c = o.titlebar->owner.client;
+		break;
+	case DECLARE_KIND_CLIENT:
+		o.c = hit.object;
+		o.kind = !client_is_unmanaged(o.c) || client_wants_focus(o.c)
+			? OWNER_CLIENT : OWNER_FOREIGN;
+		break;
+	case DECLARE_KIND_LAYER:
+		o.kind = OWNER_FOREIGN;
+		o.l = hit.object;
+		break;
+	default:
+		/* No hit is the desktop. A kind with no case above has no
+		 * bindings, so it must not fall to the root ones. */
+		o.kind = hit.kind ? OWNER_FOREIGN : OWNER_DESKTOP;
+		break;
+	}
+	return o;
+}
+
+/* Fire the owner's bindings for one button event at the cursor. Returns
+ * whether a binding took the event. Only a wibox and the desktop can take
+ * one: a window's bindings observe, and the app still gets the event. */
+static bool
+pointer_owner_button(const struct pointer_owner *o, uint32_t button, bool press)
+{
+	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+	uint32_t mods = CLEANMASK(keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0);
+
+	switch (o->kind) {
+	case OWNER_DRAWIN:
+		return luaA_drawin_button_check(o->drawin, (int)cursor->x - o->drawin->x,
+			(int)cursor->y - o->drawin->y, button, mods, press);
+	case OWNER_CLIENT: {
+		int x = (int)cursor->x - o->c->geometry.x - client_border(o->c);
+		int y = (int)cursor->y - o->c->geometry.y - client_border(o->c);
+
+		/* The titlebar drawable first, then the client, as AwesomeWM's
+		 * event_handle_button does. */
+		if (o->titlebar)
+			luaA_drawable_button_emit(o->c, o->titlebar, x, y, button, mods, press);
+		luaA_client_button_check(o->c, x, y, button, mods, press);
+		return false;
+	}
+	case OWNER_DESKTOP:
+		return luaA_root_button_check(globalconf_get_lua_State(), button, mods,
+			cursor->x, cursor->y, press) > 0;
+	default:
+		return false;
+	}
+}
+
+/* The press of each held button, taken back at its release. The owner is
+ * kept as its node handle, which stops resolving when the window or the
+ * wibox is gone. */
+static struct pointer_press {
+	uint32_t button;
+	enum pointer_owner_kind kind;
+	uint64_t handle;
+} pointer_presses[8];
+static size_t pointer_presses_len;
+
+/* Removes and returns a button's press. Its kind is OWNER_NONE when the
+ * button has none. */
+static struct pointer_press
+pointer_press_take(uint32_t button)
+{
+	for (size_t i = 0; i < pointer_presses_len; i++) {
+		if (pointer_presses[i].button != button)
+			continue;
+		struct pointer_press press = pointer_presses[i];
+		pointer_presses[i] = pointer_presses[--pointer_presses_len];
+		return press;
+	}
+	return (struct pointer_press) { 0 };
+}
+
+static void
+pointer_press_store(uint32_t button, const struct pointer_owner *o)
+{
+	const struct node *n = o->kind == OWNER_DRAWIN ? o->drawin->node
+		: o->kind == OWNER_CLIENT ? o->c->node : NULL;
+
+	pointer_press_take(button);
+	if (pointer_presses_len < LENGTH(pointer_presses))
+		pointer_presses[pointer_presses_len++] = (struct pointer_press) {
+			button, o->kind, n ? node_handle(n) : 0 };
+}
+
+/* The owner of a release is the owner of its press, as X11 reports a release
+ * to the window that got the press. An owner that is gone or hidden by then
+ * gets nothing. A press on the desktop is held by the root window in X11,
+ * and AwesomeWM reads the child under the pointer from its release: root
+ * bindings fire over the desktop, a wibox's over that wibox, none over a
+ * window. */
+static struct pointer_owner
+pointer_release_owner(const struct pointer_press *press)
+{
+	struct pointer_owner now = pointer_owner_at(cursor->x, cursor->y);
+	struct pointer_owner o = { .kind = press->kind };
+	void *object = declare_handle_get(press->handle, NULL);
+
+	switch (press->kind) {
+	case OWNER_DESKTOP:
+		if (now.kind == OWNER_DESKTOP || now.kind == OWNER_DRAWIN)
+			return now;
+		break;
+	case OWNER_DRAWIN:
+		o.drawin = object;
+		if (o.drawin && o.drawin->visible)
+			return o;
+		break;
+	case OWNER_CLIENT:
+		o.c = object;
+		o.titlebar = now.c == o.c ? now.titlebar : NULL;
+		if (o.c)
+			return o;
+		break;
+	default:
+		break;
+	}
+	return (struct pointer_owner) { 0 };
+}
+
 void
 axisnotify(struct wl_listener *listener, void *data)
 {
@@ -351,16 +517,12 @@ axisnotify(struct wl_listener *listener, void *data)
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
 
-	Client *c = NULL;
-	LayerSurface *l = NULL;
-	drawin_t *drawin = NULL;
-	drawable_t *titlebar_drawable = NULL;
-	xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
+	struct pointer_owner owner = pointer_owner_at(cursor->x, cursor->y);
 
 	/* Clay multiplies delta by ten: a wheel notch of 15 moves content
 	 * 30 pixels. Wheel down moves the content up. */
 	if (!session_is_locked() && event->delta != 0) {
-		if (!c && !l) {
+		if (owner.kind == OWNER_DESKTOP || owner.kind == OWNER_DRAWIN) {
 			if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
 				declare_wheel(0, -event->delta / 5);
 			else
@@ -421,41 +583,10 @@ axisnotify(struct wl_listener *listener, void *data)
 			return; /* Don't process event further */
 		}
 
+		/* A tick is a press and a release at the pointer's owner. */
 		for (int tick = 0; tick < ticks; tick++) {
-			lua_State *L = globalconf_get_lua_State();
-			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-			int rel_x, rel_y;
-
-			if (drawin) {
-				/* Scroll on drawin (wibox) */
-				rel_x = (int)cursor->x - drawin->x;
-				rel_y = (int)cursor->y - drawin->y;
-
-				/* Emit press then release (scroll is instantaneous) */
-				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
-				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
-			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
-				/* Scroll on client */
-				rel_x = (int)cursor->x - c->geometry.x - client_border(c);
-				rel_y = (int)cursor->y - c->geometry.y - client_border(c);
-
-				/* Emit on titlebar drawable if applicable */
-				if (titlebar_drawable) {
-					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
-					                          CLEANMASK(mods), true);
-					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
-					                          CLEANMASK(mods), false);
-				}
-
-				/* Emit on client (press + release) */
-				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
-				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
-			} else {
-				/* Scroll on root/empty space */
-				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
-				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
-			}
+			pointer_owner_button(&owner, button, true);
+			pointer_owner_button(&owner, button, false);
 		}
 	}
 
@@ -478,9 +609,13 @@ buttonpress(struct wl_listener *listener, void *data)
 	bench_input_event_record();
 #endif
 	struct wlr_pointer_button_event *event = data;
-	struct wlr_keyboard *keyboard;
-	uint32_t mods;
-	Client *c;
+	struct pointer_owner owner = {0};
+	struct pointer_press press = {0};
+
+	/* Taken before the grabber check below: a release the grabber takes
+	 * must not leave its press behind. */
+	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED)
+		press = pointer_press_take(event->button);
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
@@ -509,22 +644,15 @@ buttonpress(struct wl_listener *listener, void *data)
 		goto release;
 
 	switch (event->state) {
-	case WL_POINTER_BUTTON_STATE_PRESSED: {
-		Monitor *mon;
-		LayerSurface *l = NULL;
-		drawin_t *drawin = NULL;
-		drawable_t *titlebar_drawable = NULL;
-		int rel_x, rel_y;
-
+	case WL_POINTER_BUTTON_STATE_PRESSED:
 		cursor_mode = CurPressed;
 		if (locked)
 			break;
 
-		/* Change focus if the button was _pressed_ over a client or layer surface */
-		xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
+		owner = pointer_owner_at(cursor->x, cursor->y);
 
 		/* For Lua lock, only allow interaction with the lock surface */
-		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
+		if (some_is_lua_locked() && owner.drawin != some_get_lua_lock_surface())
 			return;
 
 		/* The Clay inspector's seat mirror learns every left press; a press
@@ -539,44 +667,16 @@ buttonpress(struct wl_listener *listener, void *data)
 				return;
 		}
 
-		/* Get keyboard modifiers */
-		keyboard = wlr_seat_get_keyboard(seat);
-		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+		/* A press a wibox or a root binding took stops here. A wibox click
+		 * never reaches root bindings: AwesomeWM grabs root buttons on the
+		 * root window, which a wibox click never reaches. */
+		pointer_press_store(event->button, &owner);
+		if (pointer_owner_button(&owner, event->button, true))
+			return;
 
-		/* Check if a drawin was clicked */
-		if (drawin) {
-			/* Calculate drawin-relative coordinates */
-			rel_x = (int)cursor->x - drawin->x;
-			rel_y = (int)cursor->y - drawin->y;
-
-			/* Check drawin-specific button array (AwesomeWM-compatible two-stage emission) */
-			if (luaA_drawin_button_check(drawin, rel_x, rel_y, event->button,
-			                             CLEANMASK(mods), true)) {
-				return;
-			}
-
-			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
-			/* Calculate client-relative coordinates */
-			rel_x = (int)cursor->x - c->geometry.x - client_border(c);
-			rel_y = (int)cursor->y - c->geometry.y - client_border(c);
-
-			/* If click is on a titlebar drawable, emit button signal on it
-			 * This matches AwesomeWM's event.c:76-84 where they call event_emit_button on titlebar drawable */
-			if (titlebar_drawable) {
-				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, event->button,
-				                          CLEANMASK(mods), true);
-			}
-
-			/* Check client button array (AwesomeWM-compatible two-stage emission)
-			 * This enables awful.mouse.client.move() and resize() to work via
-			 * client button bindings defined in rc.lua
-			 * Note: Unlike root/drawin handlers, we don't return early here.
-			 * AwesomeWM always passes clicks through to clients (XCB_ALLOW_REPLAY_POINTER),
-			 * so button bindings act as transparent observers, not consumers. */
-			luaA_client_button_check(c, rel_x, rel_y, event->button,
-			                        CLEANMASK(mods), true);
-		} else if (l && l->lua_object) {
+		if (owner.l && owner.l->lua_object) {
 			/* Layer surface was clicked - grant keyboard focus if it wants it */
+			LayerSurface *l = owner.l;
 			uint32_t kb_mode = l->layer_surface->current.keyboard_interactive;
 			if (kb_mode == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE ||
 			    kb_mode == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND) {
@@ -592,24 +692,9 @@ buttonpress(struct wl_listener *listener, void *data)
 				}
 				layer_surface_grant_keyboard(l);
 			}
-		}
-
-		/* Check root button bindings (only over empty desktop). A click on a
-		 * wibar belongs to that wibar whether or not a widget consumed it:
-		 * AwesomeWM grabs root buttons on the root window, which a wibox click
-		 * never reaches. */
-		if (!c && !l && !drawin) {
-			lua_State *L = globalconf_get_lua_State();
-
-			/* Check root button bindings */
-			if (luaA_root_button_check(L, event->button, CLEANMASK(mods),
-			                           cursor->x, cursor->y, true) > 0) {
-				/* Root button binding matched and handled */
-				return;
-			}
-
+		} else if (owner.kind == OWNER_DESKTOP) {
 			/* No root binding matched - update selmon based on cursor position */
-			mon = xytomon(cursor->x, cursor->y);
+			Monitor *mon = xytomon(cursor->x, cursor->y);
 			if (mon && mon != selmon) {
 				selmon = mon;
 				/* Queue signal so Lua knows monitor changed */
@@ -618,11 +703,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		}
 
 		break;
-	}
-	case WL_POINTER_BUTTON_STATE_RELEASED: {
-		drawin_t *drawin = NULL;
-		drawable_t *titlebar_drawable = NULL;
-
+	case WL_POINTER_BUTTON_STATE_RELEASED:
 		/* NOTE: C-level move/resize exit handling removed - Lua mousegrabber handles this now */
 		cursor_mode = CurNormal;
 
@@ -632,53 +713,11 @@ buttonpress(struct wl_listener *listener, void *data)
 		if (declare_inspector_covers(cursor->x, cursor->y))
 			goto release;
 
-		/* Check if a drawin was released over */
-		if (!session_is_locked()) {
-			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
-
-			/* Get keyboard modifiers */
-			keyboard = wlr_seat_get_keyboard(seat);
-			mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-
-			if (drawin) {
-				/* Calculate drawin-relative coordinates */
-				int rel_x = (int)cursor->x - drawin->x;
-				int rel_y = (int)cursor->y - drawin->y;
-
-				/* Emit button release signals (AwesomeWM-compatible) */
-				if (luaA_drawin_button_check(drawin, rel_x, rel_y, event->button,
-				                             CLEANMASK(mods), false)) {
-					goto release;
-				}
-			} else if (c) {
-				/* Released on client - check client button bindings */
-				int rel_x = (int)cursor->x - c->geometry.x - client_border(c);
-				int rel_y = (int)cursor->y - c->geometry.y - client_border(c);
-
-				/* If release is on a titlebar drawable, emit button signal on it */
-				if (titlebar_drawable) {
-					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, event->button,
-					                          CLEANMASK(mods), false);
-				}
-
-				/* Emit button release signals on client (AwesomeWM-compatible)
-				 * Like press events, releases are passed through to the client. */
-				luaA_client_button_check(c, rel_x, rel_y, event->button,
-				                        CLEANMASK(mods), false);
-			} else {
-				/* Released on empty space - check root button bindings */
-				lua_State *L = globalconf_get_lua_State();
-
-				/* Check root button bindings for release event */
-				if (luaA_root_button_check(L, event->button, CLEANMASK(mods),
-				                           cursor->x, cursor->y, false) > 0) {
-					/* Root button release binding matched and handled */
-					goto release;
-				}
-			}
+		if (press.kind != OWNER_NONE && !session_is_locked()) {
+			owner = pointer_release_owner(&press);
+			pointer_owner_button(&owner, event->button, false);
 		}
 		break;
-	}
 	}
 
 	/* Don't forward button event to client if mousegrabber started during
@@ -687,6 +726,11 @@ buttonpress(struct wl_listener *listener, void *data)
 	 * a mousegrabber, the client never sees either press or release. */
 	if (mousegrabber_isrunning())
 		goto release;
+
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED && !locked
+			&& owner.surface != seat->pointer_state.focused_surface
+			&& seat->pointer_state.button_count == 0 && !seat->drag)
+		pointerfocus(owner.c, owner.surface, owner.sx, owner.sy, event->time_msec);
 
 	/* If the event wasn't handled by the compositor, notify the client with
 	 * pointer focus that a button press has occurred */
@@ -827,22 +871,11 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 #ifdef SOMEWM_BENCH
 	bench_input_event_record();
 #endif
-	double sx = 0, sy = 0, sx_confined, sy_confined;
-	Client *c = NULL, *w = NULL;
-	LayerSurface *l = NULL;
+	double sx = 0, sy = 0;
+	Client *c = NULL;
+	drawin_t *drawin = NULL;
+	drawable_t *titlebar_drawable = NULL;
 	struct wlr_surface *surface = NULL;
-
-	/* Find the client under the pointer and send the event along. */
-	xytonode(cursor->x, cursor->y, &surface, &c, NULL, NULL, NULL, &sx, &sy);
-
-	if (seat->pointer_state.button_count > 0 && !seat->drag
-			&& surface != seat->pointer_state.focused_surface
-			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &l) >= 0) {
-		c = w;
-		surface = seat->pointer_state.focused_surface;
-		sx = cursor->x - (l ? (l->geom.x + l->mon->m.x) : w->geometry.x);
-		sy = cursor->y - (l ? (l->geom.y + l->mon->m.y) : w->geometry.y);
-	}
 
 	/* time is 0 in internal calls meant to restore pointer focus. */
 	if (time) {
@@ -855,21 +888,15 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * the "last constraint wins" bug breaking games like Minecraft. */
 
 		if (active_constraint) {
-			toplevel_from_wlr_surface(active_constraint->surface, &c, &l);
-			if ((c || l) && active_constraint->surface == seat->pointer_state.focused_surface) {
-				/* Layer surfaces can hold constraints too, e.g., the
-				 * capture surface of lan-mouse at the screen edge. */
-				if (l) {
-					sx = cursor->x - l->geom.x - l->mon->m.x;
-					sy = cursor->y - l->geom.y - l->mon->m.y;
-				} else {
-					sx = cursor->x - c->geometry.x - client_border(c);
-					sy = cursor->y - c->geometry.y - client_border(c);
-				}
-				if (wlr_region_confine(&active_constraint->region, sx, sy,
-						sx + dx, sy + dy, &sx_confined, &sy_confined)) {
-					dx = sx_confined - sx;
-					dy = sy_confined - sy;
+			if (active_constraint->surface == seat->pointer_state.focused_surface
+					&& toplevel_from_wlr_surface(active_constraint->surface, NULL, NULL) >= 0) {
+				double cx = cursor->x - pointer_focus_origin_x;
+				double cy = cursor->y - pointer_focus_origin_y;
+				double sx_confined, sy_confined;
+				if (wlr_region_confine(&active_constraint->region, cx, cy,
+						cx + dx, cy + dy, &sx_confined, &sy_confined)) {
+					dx = sx_confined - cx;
+					dy = sy_confined - cy;
 				}
 
 				if (active_constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED)
@@ -890,6 +917,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				selmon = mon;
 		}
 	}
+
+	xytonode(cursor->x, cursor->y, &surface, &c, NULL, &drawin, &titlebar_drawable, &sx, &sy);
 
 	/* The Clay inspector's seat mirror: a moved cursor re-solves the panel
 	 * it is over (and the one it left), for the hovered row. */
@@ -945,35 +974,29 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * (only when mousegrabber is NOT active - filtered above) */
 	if (time && !globalconf.mouse_under.ignore_next_enter_leave) {
 		lua_State *L = globalconf_get_lua_State();
-		Client *current_client = NULL;
-		drawin_t *current_drawin = NULL;
-		drawable_t *titlebar_drawable = NULL;
 
-		/* Find what's under cursor */
-		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
-
-		if (current_client) {
+		if (c) {
 			/* Mouse is over a client */
 			if (globalconf.mouse_under.type != UNDER_CLIENT ||
-			    globalconf.mouse_under.ptr.client != current_client) {
+			    globalconf.mouse_under.ptr.client != c) {
 				/* Different object - emit leave on old, enter on new */
 				mouse_emit_leave(L);
-				mouse_emit_client_enter(L, current_client);
+				mouse_emit_client_enter(L, c);
 			}
 
 			/* Always emit mouse::move on current client (coalesced per frame) */
-			luaA_object_push(L, current_client);
+			luaA_object_push(L, c);
 			if (lua_isnil(L, -1)) {
-				warn("mouse::move on unregistered client %p", (void*)current_client);
+				warn("mouse::move on unregistered client %p", (void*)c);
 			}
 			some_event_queue_move(L, -1,
-				(int)(cursor->x - current_client->geometry.x - client_border(current_client)),
-				(int)(cursor->y - current_client->geometry.y - client_border(current_client)));
+				(int)(cursor->x - c->geometry.x - client_border(c)),
+				(int)(cursor->y - c->geometry.y - client_border(c)));
 			lua_pop(L, 1);
 
 			/* Check if mouse is over a titlebar drawable - emit signals for widget hover */
 			if (titlebar_drawable) {
-				luaA_object_push(L, current_client);
+				luaA_object_push(L, c);
 				luaA_object_push_item(L, -1, titlebar_drawable);
 				if (lua_isnil(L, -1)) {
 					lua_pop(L, 2);
@@ -981,9 +1004,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				event_drawable_under_mouse(L, -1);
 
 				/* Emit mouse::move on titlebar drawable with local coordinates */
-				int tb_x = (int)(cursor->x - current_client->geometry.x - client_border(current_client));
-				int tb_y = (int)(cursor->y - current_client->geometry.y - client_border(current_client));
-				client_get_drawable_offset(current_client, &tb_x, &tb_y);
+				int tb_x = (int)(cursor->x - c->geometry.x - client_border(c));
+				int tb_y = (int)(cursor->y - c->geometry.y - client_border(c));
+				client_get_drawable_offset(c, &tb_x, &tb_y);
 				some_event_queue_move(L, -1, tb_x, tb_y);
 
 				lua_pop(L, 2);  /* pop drawable and client */
@@ -995,28 +1018,28 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				lua_pop(L, 1);
 			}
 
-		} else if (current_drawin) {
+		} else if (drawin) {
 			/* Mouse over drawin - emit signals on drawable for widget hover */
 			if (globalconf.mouse_under.type != UNDER_DRAWIN ||
-			    globalconf.mouse_under.ptr.drawin != current_drawin) {
+			    globalconf.mouse_under.ptr.drawin != drawin) {
 				mouse_emit_leave(L);
-				mouse_emit_drawin_enter(L, current_drawin);
+				mouse_emit_drawin_enter(L, drawin);
 			}
 
-			if (current_drawin->node && current_drawin->node->ui_box) {
-				ui_box_pointer_move(L, current_drawin, (int)cursor->x - current_drawin->x,
-					(int)cursor->y - current_drawin->y);
+			if (drawin->node && drawin->node->ui_box) {
+				ui_box_pointer_move(L, drawin, (int)cursor->x - drawin->x,
+					(int)cursor->y - drawin->y);
 			} else {
-				luaA_object_push(L, current_drawin);
+				luaA_object_push(L, drawin);
 				if (lua_isnil(L, -1)) {
-					warn("mouse event on unregistered drawin %p", (void*)current_drawin);
+					warn("mouse event on unregistered drawin %p", (void*)drawin);
 					lua_pop(L, 1);
 				} else {
-					luaA_object_push_item(L, -1, current_drawin->drawable);
+					luaA_object_push_item(L, -1, drawin->drawable);
 					event_drawable_under_mouse(L, -1);
 					some_event_queue_move(L, -1,
-						(int)cursor->x - current_drawin->x,
-						(int)cursor->y - current_drawin->y);
+						(int)cursor->x - drawin->x,
+						(int)cursor->y - drawin->y);
 					lua_pop(L, 2);
 				}
 			}
@@ -1034,13 +1057,19 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		globalconf.mouse_under.ignore_next_enter_leave = false;
 	}
 
-	/* If there's no client surface under the cursor, set the cursor image.
+	/* A held button keeps the motion with the surface that has it. The pick
+	 * above still says what is under the pointer. */
+	Client *held_client = NULL;
+	struct wlr_surface *held_surface = seat->pointer_state.focused_surface;
+	bool held = seat->pointer_state.button_count > 0 && !seat->drag
+		&& surface != held_surface
+		&& toplevel_from_wlr_surface(held_surface, &held_client, NULL) >= 0;
+
+	/* If no client surface gets the motion, set the cursor image.
 	 * Check if pointer is over a drawin with a custom cursor first. */
-	if (!surface && !seat->drag) {
-		drawin_t *hover_drawin = NULL;
-		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &hover_drawin, NULL, NULL, NULL);
-		const char *name = hover_drawin && hover_drawin->node && hover_drawin->node->ui_box
-			? ui_box_pointer_cursor(hover_drawin) : hover_drawin ? hover_drawin->cursor : NULL;
+	if (!surface && !held && !seat->drag) {
+		const char *name = drawin && drawin->node && drawin->node->ui_box
+			? ui_box_pointer_cursor(drawin) : drawin ? drawin->cursor : NULL;
 		if (name)
 			cursor_set_xcursor(name);
 		else
@@ -1052,20 +1081,18 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * like Krita's tablet tester. */
 	if (time && !seat->drag && device && device->type == WLR_INPUT_DEVICE_TABLET) {
 		TrackedTablet *tt = find_tracked_tablet_by_device(device);
-		struct wlr_surface *tablet_surface = NULL;
-		double tablet_sx = 0.0, tablet_sy = 0.0;
-
-		xytonode(cursor->x, cursor->y, &tablet_surface, NULL, NULL, NULL, NULL,
-				&tablet_sx, &tablet_sy);
-
-		if (tt && tt->tablet_v2 && tablet_surface
-				&& wlr_surface_accepts_tablet_v2(tablet_surface, tt->tablet_v2)) {
+		if (tt && tt->tablet_v2 && surface
+				&& wlr_surface_accepts_tablet_v2(surface, tt->tablet_v2)) {
 			wlr_seat_pointer_notify_clear_focus(seat);
 			return;
 		}
 	}
 
-	pointerfocus(c, surface, sx, sy, time);
+	if (held)
+		pointerfocus(held_client, held_surface, cursor->x - pointer_focus_origin_x,
+				cursor->y - pointer_focus_origin_y, time);
+	else
+		pointerfocus(c, surface, sx, sy, time);
 }
 
 /* Whether the surface belongs to an ext-session-lock client's lock surface
@@ -1134,6 +1161,8 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	 * the client has pointer resources (normal case). */
 	wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
+	pointer_focus_origin_x = cursor->x - sx;
+	pointer_focus_origin_y = cursor->y - sy;
 }
 
 int

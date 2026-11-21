@@ -26,9 +26,17 @@ All notable changes to somewm will be documented in this file.
 - `WLR_RENDERER=pixman` is no longer supported.
 - The linux-drm-syncobj protocol is no longer advertised. Clients fall back to implicit sync.
 - `ui.box` x and y are offsets from its parent screen. Moving a box keeps its screen parent.
+- A button release binding fires on the wibox or window that got the press, wherever the pointer is when the button comes up. A release whose press was on the desktop fires root bindings only over the desktop.
+- Root button bindings match modifiers exactly, like wibox and client bindings. `awful.button({ }, ...)` on the desktop no longer fires while a modifier is held. Use `{ "Any" }` for a binding that ignores modifiers.
 
 ### Fixed
 
+- Scrolling, or releasing a button, over a layer surface or an X11 menu no longer fires root or client button bindings.
+- A button binding with the `"Any"` modifier fires once per press, and works on the desktop.
+- A click right after a pointer motion goes to the window under the pointer instead of the window the pointer just left.
+- While a button is held and the pointer leaves a window with a border or titlebar, the app receives the correct pointer position.
+- A window that opens under the pointer but below another window no longer takes the pointer from the window on top.
+- A click on an X11 window that overlaps another X11 window goes to the window on top.
 - Idle timeouts set with `awesome.set_idle_timeout` fire again while widgets or windows keep redrawing.
 - Rounded window borders remain intact with square content corners. Rounded content no longer leaves a colored fringe along borderless window edges or titlebars.
 - Removing a fake screen moves its clients to the screen under them.

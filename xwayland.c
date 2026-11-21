@@ -205,6 +205,12 @@ luaA_client_get_x11_configure(lua_State *L, Client *c)
     return 1;
 }
 
+bool
+xwayland_managed(Client *c)
+{
+    return c && c->client_type == X11 && !client_is_unmanaged(c) && c->window != XCB_NONE;
+}
+
 /* Only the completed reconciliation publishes managed X11 geometry. The
  * frame's request serial proves that this declaration consumed the intent,
  * including a denied request or an accepted request that changed nothing. */
@@ -212,8 +218,7 @@ void
 xwayland_publish_geometry(Client *c, struct wlr_box frame, uint32_t request_serial)
 {
     struct wlr_box content = c->surface_box;
-    if (c->client_type != X11 || client_is_unmanaged(c) || c->window == XCB_NONE
-            || !client_surface(c) || !client_surface(c)->mapped
+    if (!xwayland_managed(c) || !client_surface(c) || !client_surface(c)->mapped
             || content.width <= 0 || content.height <= 0)
         return;
     bool pending = c->x11_configure.pending;
@@ -244,6 +249,29 @@ xwayland_publish_geometry(Client *c, struct wlr_box frame, uint32_t request_seri
             content.width, content.height);
     c->x11_configure.pending = false;
     c->x11_configure.mask = 0;
+}
+
+/* Sends an output's managed X11 clients, bottom first, to the X server as
+ * their stacking order. changed says the list differs from the last one sent.
+ * An unchanged list is sent again only when wlroots restacked one of its
+ * windows since, which it does every time a window maps. */
+void
+xwayland_publish_order(Client *const *clients, size_t len, bool changed)
+{
+    struct wlr_xwayland_surface *upper = NULL;
+
+    /* stack_link is wlroots' record of the X stack, bottom first. */
+    for (size_t i = 0; !changed && i + 1 < len; i++)
+        changed = clients[i]->surface.xwayland->stack_link.next
+            != &clients[i + 1]->surface.xwayland->stack_link;
+    if (!changed) return;
+    for (size_t i = len; i > 0; i--) {
+        struct wlr_xwayland_surface *surface = clients[i - 1]->surface.xwayland;
+        if (!upper || surface->stack_link.next != &upper->stack_link)
+            wlr_xwayland_surface_restack(surface, upper,
+                upper ? XCB_STACK_MODE_BELOW : XCB_STACK_MODE_ABOVE);
+        upper = surface;
+    }
 }
 
 void

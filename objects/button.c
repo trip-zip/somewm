@@ -102,6 +102,10 @@ luaA_pushmodifiers(lua_State *L, uint32_t modifiers)
 		lua_pushstring(L, "Mod5");
 		lua_rawseti(L, -2, idx++);
 	}
+	if (modifiers & BUTTON_MODIFIER_ANY) {
+		lua_pushstring(L, "Any");
+		lua_rawseti(L, -2, idx++);
+	}
 }
 
 /* Parse Lua table to modifiers bitmask */
@@ -383,33 +387,19 @@ drawin_emit_button_signals(lua_State *L, int drawin_idx, drawin_t *drawin, uint3
 {
 	const char *signal_name;
 	uint32_t translated_button;
-	uint16_t masked_mods;
 	int matched;
 	int i;
 	button_t *btn;
-	bool btn_matches;
-	bool mods_match;
 
 	signal_name = is_press ? "press" : "release";
 	translated_button = translate_button_code(button);
 	matched = 0;
 
-	/* Mask modifiers to only the bits we care about (matches old button_matches() logic) */
-	masked_mods = mods & 0xFF;
-
 	/* Iterate through button array */
 	for (i = 0; i < drawin->buttons.len; i++) {
 		btn = drawin->buttons.tab[i];
 
-
-		/* Match button number (0 = any button) - use translated button code */
-		btn_matches = (btn->button == 0 || btn->button == translated_button);
-
-		/* Match modifiers (BUTTON_MODIFIER_ANY = any modifiers, otherwise exact match)
-		 * This matches AwesomeWM's logic: modifiers == 0 means "NO modifiers", not "any modifiers" */
-		mods_match = (btn->modifiers == BUTTON_MODIFIER_ANY || btn->modifiers == masked_mods);
-
-		if (btn_matches && mods_match) {
+		if (button_matches(btn, translated_button, mods)) {
 
 			/* Push button object from drawin's uservalue table */
 			luaA_object_push_item(L, drawin_idx, btn);
@@ -547,13 +537,10 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 {
 	const char *signal_name;
 	uint32_t translated_button;
-	uint16_t masked_mods;
 	int matched;
 	int i;
 	int abs_client_idx;
 	button_t *btn;
-	bool btn_matches;
-	bool mods_match;
 
 	signal_name = is_press ? "press" : "release";
 	translated_button = translate_button_code(button);
@@ -562,20 +549,11 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 	/* Convert to absolute index since stack will change */
 	abs_client_idx = luaA_absindex(L, client_idx);
 
-	/* Mask modifiers to only the bits we care about */
-	masked_mods = mods & 0xFF;
-
 	/* Iterate through button array */
 	for (i = 0; i < c->buttons.len; i++) {
 		btn = c->buttons.tab[i];
 
-		/* Match button number (0 = any button) - use translated button code */
-		btn_matches = (btn->button == 0 || btn->button == translated_button);
-
-		/* Match modifiers (BUTTON_MODIFIER_ANY = any modifiers, otherwise exact match) */
-		mods_match = (btn->modifiers == BUTTON_MODIFIER_ANY || btn->modifiers == masked_mods);
-
-		if (btn_matches && mods_match) {
+		if (button_matches(btn, translated_button, mods)) {
 
 			/* Push button object from client's uservalue table */
 			luaA_object_push_item(L, abs_client_idx, btn);

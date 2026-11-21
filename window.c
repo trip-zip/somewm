@@ -1164,30 +1164,6 @@ unset_fullscreen:
 	 * leave the client undeclared until unrelated activity marked. Mapping
 	 * also reorders the stack, which is not one output's fact. */
 	declare_mark_all_dirty();
-
-	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
-	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
-	 * (buffer not committed) and would CLEAR pointer focus instead.
-	 * Gate on the content rect (geometry inset by border + titlebars), not the
-	 * full geometry: granting focus while the cursor is over the titlebar would
-	 * deliver a bogus coordinate to the client (issue: titlebar event
-	 * propagation). Mirrors the surface inset in client_configure_to_box(). */
-	if (client_surface(c) && client_surface(c)->mapped) {
-		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
-		int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-		int bw = client_border(c);
-		int x0 = c->geometry.x + bw + tl;
-		int y0 = c->geometry.y + bw + tt;
-		int x1 = c->geometry.x + bw + c->geometry.width  - tr;
-		int y1 = c->geometry.y + bw + c->geometry.height - tb;
-		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
-			double sx, sy;
-			cursor_to_client_coordinates(c, &sx, &sy);
-			pointerfocus(c, client_surface(c), sx, sy, 0);
-		}
-	}
 }
 
 void
