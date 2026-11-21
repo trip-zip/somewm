@@ -23,7 +23,11 @@ typedef struct button_t button_t;
 #define BUTTON_MODIFIER_MOD3    (1 << 5)
 #define BUTTON_MODIFIER_SUPER   (1 << 6)  /* Mod4/Super/Windows key */
 #define BUTTON_MODIFIER_MOD5    (1 << 7)
-#define BUTTON_MODIFIER_ANY     0xFFFF    /* Match any modifiers */
+/* "Any" is one bit, the value of XCB_BUTTON_MASK_ANY, and a button matches
+ * any modifiers only when it is the whole mask. awful.button makes a copy of
+ * each binding for every Lock and Mod2 combination, and those copies must
+ * not match as well. */
+#define BUTTON_MODIFIER_ANY     0x8000
 
 /* Button object structure - AwesomeWM compatible */
 struct button_t {
@@ -36,6 +40,16 @@ struct button_t {
     /* Button number (1=left, 2=middle, 3=right, 4/5=scroll, 0=any) */
     uint32_t button;
 };
+
+/* Whether a binding matches an event: its button, or any button for 0, and
+ * its modifiers exactly, or any modifiers for "Any". button is the X11 number,
+ * mods the held modifiers. Root, wibox and client bindings all match here. */
+static inline bool
+button_matches(const struct button_t *b, uint32_t button, uint32_t mods)
+{
+	return (b->button == 0 || b->button == button)
+		&& (b->modifiers == BUTTON_MODIFIER_ANY || b->modifiers == (mods & 0xFF));
+}
 
 /* AwesomeWM class system - button class */
 extern lua_class_t button_class;

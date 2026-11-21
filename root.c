@@ -285,13 +285,7 @@ luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,
 	for (int i = 0; i < buttons->len; i++) {
 		button_t *btn = buttons->tab[i];
 
-		/* Match button number (0 = any button) - use translated code */
-		bool button_matches = (btn->button == 0 || btn->button == translated_button);
-
-		/* Match modifiers (0 = any modifiers) */
-		bool mods_match = (btn->modifiers == 0 || btn->modifiers == mods);
-
-		if (button_matches && mods_match) {
+		if (button_matches(btn, translated_button, mods)) {
 			/* Push button object */
 			luaA_object_push(L, btn);
 

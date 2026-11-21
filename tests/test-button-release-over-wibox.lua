@@ -1,10 +1,13 @@
 ---------------------------------------------------------------------------
 --- Regression test: a press delivered to a client gets its release, even
---- when the release lands on a wibox whose button binding handles it.
+--- when the release lands on a wibox that has a release binding.
 ---
 --- buttonpress() returned early when a drawin binding matched the release,
 --- so wlroots kept the button held. A later drag never ended, and every
 --- following click was swallowed, until the client was killed.
+---
+--- The release belongs to the client that got the press: the client's
+--- button::release fires and the wibox's binding does not.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -55,7 +58,8 @@ runner.run_async(function()
     c.floating = true
     c:geometry({ x = 100, y = 200, width = 400, height = 300 })
 
-    local released = 0
+    local released, client_released = 0, 0
+    c:connect_signal("button::release", function() client_released = client_released + 1 end)
     local box = wibox { x = 800, y = 300, width = 200, height = 100, visible = true, ontop = true }
     box:buttons { awful.button({}, 1, nil, function() released = released + 1 end) }
     async.sleep(0.2)
@@ -65,9 +69,10 @@ runner.run_async(function()
     local cx, cy = g.x + math.floor(g.width / 2), g.y + math.floor(g.height / 2)
     pointer("move", tostring(cx), tostring(cy), "1280", "720")
     pointer("drag", tostring(cx), tostring(cy), "900", "350", "1280", "720", "50")
-    assert(async.wait_for_condition(function() return released == 1 end, 2),
-        "wibox release binding did not run")
+    assert(async.wait_for_condition(function() return client_released == 1 end, 2),
+        "the client's button::release did not fire")
     async.sleep(0.2)
+    assert(released == 0, "the wibox release binding ran for a press that was the client's")
     local seen = table.concat(buttons(), ", ")
     assert(seen == "272 1, 272 0", "client should get its press and release, got: " .. seen)
 

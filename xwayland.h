@@ -7,6 +7,8 @@
 #ifndef XWAYLAND_H
 #define XWAYLAND_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <lua.h>
 
@@ -18,6 +20,8 @@ int luaA_client_get_x11_configure(lua_State *L, struct client_t *c);
 void xwayland_geometry_authored(struct client_t *c);
 void xwayland_publish_geometry(struct client_t *c, struct wlr_box frame,
         uint32_t request_serial);
+bool xwayland_managed(struct client_t *c);
+void xwayland_publish_order(struct client_t *const *clients, size_t len, bool changed);
 
 void xwayland_setup(void);
 void xwayland_cleanup(void);

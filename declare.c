@@ -99,6 +99,7 @@ struct declare_band {
     size_t exit_owners_len, exit_owners_cap;
     uint64_t *command_handles;
     size_t command_handles_len;
+    uint64_t x11_order; /* hash of the X11 window ids last sent as the X stack */
     struct declared_host *hosts;
     size_t hosts_len;
     struct widget_tree **retired;
@@ -1197,6 +1198,33 @@ declarable_client(Client *c)
 		return false;
 	/* Unmanaged clients are not tag-tracked. */
 	return client_is_unmanaged(c) || client_isvisible(c);
+}
+
+/* The X server picks the X11 window under the pointer from its own stack,
+ * so the managed X11 clients this frame declared go to it in draw order. */
+static void
+x11_order_publish(struct declare_band *band)
+{
+    Client **order = NULL;
+    size_t len = 0, cap = 0;
+    uint64_t hash = 14695981039346656037ULL; /* FNV-1a */
+
+    for (size_t i = 0; i < band->command_handles_len; i++) {
+        enum declare_kind kind = 0;
+        Client *c = declare_handle_get(band->command_handles[i], &kind);
+        /* A client declares several leaves. It enters once, at its lowest. */
+        if (kind != DECLARE_KIND_CLIENT || !xwayland_managed(c)
+                || !declarable_client(c) || (len && order[len - 1] == c)) continue;
+        if (len == cap) {
+            cap = cap ? cap * 2 : 8;
+            p_realloc(&order, cap);
+        }
+        order[len++] = c;
+        hash = (hash ^ c->window) * 1099511628211ULL;
+    }
+    xwayland_publish_order(order, len, hash != band->x11_order);
+    band->x11_order = hash;
+    free(order);
 }
 
 static int16_t
@@ -4679,11 +4707,13 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	band->reconcile_us = now_us() - start;
     /* X11 carries position and size in one reply. All render hooks must
      * have installed this solve before any managed X11 client sees it. */
+    bool has_managed_x11 = false;
     for (size_t i = 0; i < band->records_len; i++) {
         struct declare_record *record = &band->records[i];
         if (!record->client_frame) continue;
         Client *c = declare_handle_get(record->handle, NULL);
         if (!c || c->client_type != X11 || c->mon != m) continue;
+        if (xwayland_managed(c)) has_managed_x11 = true;
         Clay_ElementData data = Clay_GetElementData((Clay_ElementId){.id = record->id});
         if (!data.found) continue;
         Clay_BoundingBox b = data.boundingBox;
@@ -4692,6 +4722,9 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
             lroundf(b.x + b.width) - x, lroundf(b.y + b.height) - y},
             record->x11_configure_serial);
     }
+    /* The walk is only worth its cost on an output that has such a client. */
+    if (has_managed_x11) x11_order_publish(band);
+    else band->x11_order = 0;
 	in_pass = false;
 	/* A transition that has not settled needs the next frame to advance
 	 * it, and one more to settle on; when every record is idle the output
