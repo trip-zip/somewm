@@ -75,9 +75,6 @@
 
 /* Module-private state */
 static unsigned int cursor_mode;
-/* Where the surface with pointer focus has its origin in the layout. Only
- * pointerfocus() writes it, so it holds for a focus that function gave. */
-static double pointer_focus_origin_x, pointer_focus_origin_y;
 static bool gesture_swipe_consumed = false;
 static bool gesture_pinch_consumed = false;
 static bool gesture_hold_consumed = false;
@@ -888,10 +885,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * the "last constraint wins" bug breaking games like Minecraft. */
 
 		if (active_constraint) {
+			double cx, cy;
 			if (active_constraint->surface == seat->pointer_state.focused_surface
-					&& toplevel_from_wlr_surface(active_constraint->surface, NULL, NULL) >= 0) {
-				double cx = cursor->x - pointer_focus_origin_x;
-				double cy = cursor->y - pointer_focus_origin_y;
+					&& declare_surface_coords(active_constraint->surface,
+						cursor->x, cursor->y, &cx, &cy)) {
 				double sx_confined, sy_confined;
 				if (wlr_region_confine(&active_constraint->region, cx, cy,
 						cx + dx, cy + dy, &sx_confined, &sy_confined)) {
@@ -1088,10 +1085,12 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		}
 	}
 
-	if (held)
-		pointerfocus(held_client, held_surface, cursor->x - pointer_focus_origin_x,
-				cursor->y - pointer_focus_origin_y, time);
-	else
+	if (held) {
+		/* The surface can move while the pointer stays outside it. Use its
+		 * current placement, including decorations and subsurface offsets. */
+		if (declare_surface_coords(held_surface, cursor->x, cursor->y, &sx, &sy))
+			pointerfocus(held_client, held_surface, sx, sy, time);
+	} else
 		pointerfocus(c, surface, sx, sy, time);
 }
 
@@ -1161,8 +1160,6 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	 * the client has pointer resources (normal case). */
 	wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
-	pointer_focus_origin_x = cursor->x - sx;
-	pointer_focus_origin_y = cursor->y - sy;
 }
 
 int

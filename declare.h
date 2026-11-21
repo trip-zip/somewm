@@ -181,6 +181,11 @@ struct declare_hit {
 };
 void declare_hit_at(double lx, double ly, struct declare_hit *out);
 
+/* Surface-local coordinates of a layout point, even outside its input region.
+ * Returns false when no output currently places the surface. */
+bool declare_surface_coords(struct wlr_surface *surface, double lx, double ly,
+	double *sx, double *sy);
+
 /* The screenshot backmap: the object whose leaf drew node, or NULL for a
  * node no band drew. Searches every output's band. */
 

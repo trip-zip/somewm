@@ -11,12 +11,20 @@
  * - On SIGUSR1: creates an xdg_popup on that toplevel
  * - On SIGTERM: clean shutdown
  *
- * Usage: test-popup-client
+ * With a marker path it also binds the pointer and appends one line per
+ * event, naming the surface that received it:
+ *
+ *     enter parent|popup
+ *     leave parent|popup
+ *     button parent|popup <state>
+ *
+ * Usage: test-popup-client [marker-path]
  */
 
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,6 +55,80 @@ static struct xdg_surface *g_popup_xdg_surface;
 static struct xdg_popup *g_popup;
 
 static uint32_t g_width = 200, g_height = 200;
+
+static const char *g_marker;
+static struct wl_seat *g_seat;
+static struct wl_pointer *g_pointer;
+static struct wl_surface *g_pointer_surface;
+
+static void log_event(const char *fmt, ...) {
+    FILE *f = fopen(g_marker, "a");
+    if (!f)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
+static const char *surface_name(struct wl_surface *surface);
+
+static void pointer_enter(void *data, struct wl_pointer *ptr, uint32_t serial,
+        struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {
+    (void)data; (void)ptr; (void)serial; (void)sx; (void)sy;
+    g_pointer_surface = surface;
+    log_event("enter %s", surface_name(surface));
+}
+
+static void pointer_leave(void *data, struct wl_pointer *ptr, uint32_t serial,
+        struct wl_surface *surface) {
+    (void)data; (void)ptr; (void)serial;
+    log_event("leave %s", surface_name(surface));
+    g_pointer_surface = NULL;
+}
+
+static void pointer_motion(void *data, struct wl_pointer *ptr, uint32_t time,
+        wl_fixed_t sx, wl_fixed_t sy) {
+    (void)data; (void)ptr; (void)time; (void)sx; (void)sy;
+}
+
+static void pointer_button(void *data, struct wl_pointer *ptr, uint32_t serial,
+        uint32_t time, uint32_t button, uint32_t state) {
+    (void)data; (void)ptr; (void)serial; (void)time; (void)button;
+    log_event("button %s %u", surface_name(g_pointer_surface), state);
+}
+
+static void pointer_axis(void *data, struct wl_pointer *ptr, uint32_t time,
+        uint32_t axis, wl_fixed_t value) {
+    (void)data; (void)ptr; (void)time; (void)axis; (void)value;
+}
+
+/* The seat is bound at version 1, which has these five events only. */
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = pointer_enter,
+    .leave = pointer_leave,
+    .motion = pointer_motion,
+    .button = pointer_button,
+    .axis = pointer_axis,
+};
+
+static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
+    (void)data;
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !g_pointer) {
+        g_pointer = wl_seat_get_pointer(seat);
+        wl_pointer_add_listener(g_pointer, &pointer_listener, NULL);
+    }
+}
+
+static const struct wl_seat_listener seat_listener = {
+    .capabilities = seat_capabilities,
+};
+
+static const char *surface_name(struct wl_surface *surface) {
+    return surface && surface == g_popup_surface ? "popup" : "parent";
+}
 
 static void handle_sigterm(int sig) {
     (void)sig;
@@ -201,6 +283,9 @@ static void registry_global(void *data, struct wl_registry *reg,
         g_xdg_wm_base = wl_registry_bind(reg, name,
             &xdg_wm_base_interface, 5);
         xdg_wm_base_add_listener(g_xdg_wm_base, &xdg_wm_base_listener, NULL);
+    } else if (g_marker && strcmp(interface, wl_seat_interface.name) == 0) {
+        g_seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
+        wl_seat_add_listener(g_seat, &seat_listener, NULL);
     }
 }
 
@@ -248,7 +333,8 @@ static void create_popup(void) {
 }
 
 int main(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    if (argc > 1)
+        g_marker = argv[1];
 
     /* sigaction without SA_RESTART, so dispatch returns EINTR and the loop
      * gets a chance to see g_spawn_popup. */

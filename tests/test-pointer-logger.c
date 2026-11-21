@@ -19,8 +19,11 @@
  * With --drag-icon the first button press starts a drag with a mapped 32x32
  * icon surface (wl_data_device.start_drag).
  *
+ * With --input-region WxH+X+Y only that box of the surface accepts input. The
+ * rest is a hole, and a pointer there belongs to whatever is below.
+ *
  * Usage: test-pointer-logger --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY]
- *                            [--drag-icon]
+ *                            [--drag-icon] [--input-region WxH+X+Y]
  */
 
 #include <signal.h>
@@ -51,6 +54,7 @@ static int g_width = 600, g_height = 400;
 static int g_cursor_w, g_cursor_h, g_cursor_hx, g_cursor_hy;
 static struct wl_surface *g_cursor_surface;
 static bool g_drag_icon;
+static int g_input_w, g_input_h, g_input_x, g_input_y;
 static struct wl_data_device_manager *g_data_device_manager;
 static struct wl_data_device *g_data_device;
 static struct wl_surface *g_drag_surface;
@@ -280,7 +284,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY] [--drag-icon]\n", prog);
+    fprintf(stderr, "Usage: %s --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY] [--drag-icon] [--input-region WxH+X+Y]\n", prog);
 }
 
 int main(int argc, char *argv[]) {
@@ -298,6 +302,12 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--cursor") == 0 && i + 1 < argc) {
             if (sscanf(argv[++i], "%dx%d+%d+%d", &g_cursor_w, &g_cursor_h,
                     &g_cursor_hx, &g_cursor_hy) != 4 || g_cursor_w < 1 || g_cursor_h < 1) {
+                print_usage(argv[0]);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--input-region") == 0 && i + 1 < argc) {
+            if (sscanf(argv[++i], "%dx%d+%d+%d", &g_input_w, &g_input_h,
+                       &g_input_x, &g_input_y) != 4 || g_input_w <= 0 || g_input_h <= 0) {
                 print_usage(argv[0]);
                 return 1;
             }
@@ -339,6 +349,12 @@ int main(int argc, char *argv[]) {
     xdg_toplevel_add_listener(g_toplevel, &toplevel_listener, NULL);
     xdg_toplevel_set_app_id(g_toplevel, g_app_id);
     xdg_toplevel_set_title(g_toplevel, "pointer-logger");
+    if (g_input_w > 0) {
+        struct wl_region *region = wl_compositor_create_region(g_compositor);
+        wl_region_add(region, g_input_x, g_input_y, g_input_w, g_input_h);
+        wl_surface_set_input_region(g_surface, region);
+        wl_region_destroy(region);
+    }
 
     wl_surface_commit(g_surface);
     wl_display_roundtrip(g_display);

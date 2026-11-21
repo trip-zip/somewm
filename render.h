@@ -272,6 +272,14 @@ bool render_hit(struct render_state *rs, double x, double y,
 	bool (*accept)(void *user, const struct render_node_view *view,
 		double sx, double sy), void *user);
 
+/* Project a band-local point onto a mapped surface in the current draw order,
+ * including presentation and subsurface offsets. Ignores input regions and
+ * clipping so a grab can receive coordinates outside its surface. Returns
+ * false when the surface has no current placement. */
+bool render_surface_coords(struct render_state *rs,
+	const struct render_client_hooks *hooks, struct wlr_surface *surface,
+	double x, double y, double *sx, double *sy);
+
 /* Filter a Clay element candidate at a band-local point through its retained
  * masks and its own shaped host. An element with no paint record adds no
  * restriction; its ancestors still filter the subtree in the widget walk. */
