@@ -7,12 +7,17 @@
  * full buttonpress()/axisnotify() path: mousegrabber routing, client button
  * bindings, and seat notification.
  *
- * Usage: test-virtual-pointer-client <move|click|scroll> <x> <y>
- *                                     <x_extent> <y_extent>
+ * Usage: test-virtual-pointer-client <move|click|scroll|button|jumpclick>
+ *                                     <x> <y> <x_extent> <y_extent>
  *                                     [left|middle|right|side|extra|up|down]
  *        test-virtual-pointer-client drag <x1> <y1> <x2> <y2>
  *                                     <x_extent> <y_extent> <hold_ms>
  *                                     [left|middle|right|side|extra]
+ *
+ * button presses and releases where the pointer already is and sends no
+ * motion; its x and y are ignored. jumpclick sends one motion, the press and
+ * the release in a single write, so the compositor reads all three before it
+ * draws a frame, the way a touch tap or a tablet tip arrives.
  *
  * x/y are layout coordinates; x_extent/y_extent the layout size (normally the
  * screen geometry). "move" only positions the cursor; "click" also presses and
@@ -64,18 +69,19 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
-/* Workaround, sent twice: motionnotify hit-tests at the pre-move cursor
- * position, so pointer focus catches up one event late. Drop the second
- * send once hit-testing follows the move (input.c motionnotify). */
+static void send_button(struct zwlr_virtual_pointer_v1 *pointer, uint32_t btn,
+        uint32_t state) {
+    zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn, state);
+    zwlr_virtual_pointer_v1_frame(pointer);
+}
+
 static void move_to(struct wl_display *display, struct zwlr_virtual_pointer_v1 *pointer,
         uint32_t x, uint32_t y, uint32_t x_extent, uint32_t y_extent) {
-    for (int i = 0; i < 2; i++) {
-        zwlr_virtual_pointer_v1_motion_absolute(pointer, now_ms(), x, y,
-                                                x_extent, y_extent);
-        zwlr_virtual_pointer_v1_frame(pointer);
-        wl_display_roundtrip(display);
-        sleep_ms(30);
-    }
+    zwlr_virtual_pointer_v1_motion_absolute(pointer, now_ms(), x, y,
+                                            x_extent, y_extent);
+    zwlr_virtual_pointer_v1_frame(pointer);
+    wl_display_roundtrip(display);
+    sleep_ms(30);
 }
 
 static uint32_t button_code(const char *name) {
@@ -92,14 +98,17 @@ int main(int argc, char *argv[]) {
     int nargs = drag ? 9 : 6;
     if ((argc != nargs && argc != nargs + 1)
             || (!drag && strcmp(argv[1], "move") != 0 && strcmp(argv[1], "click") != 0
-                && strcmp(argv[1], "scroll") != 0)) {
-        fprintf(stderr, "Usage: %s <move|click|scroll> <x> <y> <x_extent> "
+                && strcmp(argv[1], "scroll") != 0 && strcmp(argv[1], "button") != 0
+                && strcmp(argv[1], "jumpclick") != 0)) {
+        fprintf(stderr, "Usage: %s <move|click|scroll|button|jumpclick> <x> <y> <x_extent> "
                 "<y_extent> [left|middle|right|side|extra | scroll: up|down|left|right]\n"
                 "       %s drag <x1> <y1> <x2> <y2> <x_extent> <y_extent> <hold_ms> "
                 "[left|middle|right|side|extra]\n", argv[0], argv[0]);
         return 1;
     }
-    int click = strcmp(argv[1], "click") == 0;
+    int button_only = strcmp(argv[1], "button") == 0;
+    int jump = strcmp(argv[1], "jumpclick") == 0;
+    int click = strcmp(argv[1], "click") == 0 || button_only;
     int scroll = strcmp(argv[1], "scroll") == 0;
     uint32_t btn = BTN_LEFT;
     int32_t scroll_dir = 1; /* wl_pointer convention: positive = down, right */
@@ -149,18 +158,23 @@ int main(int argc, char *argv[]) {
     struct zwlr_virtual_pointer_v1 *pointer =
         zwlr_virtual_pointer_manager_v1_create_virtual_pointer(g_manager, g_seat);
 
-    move_to(display, pointer, x, y, x_extent, y_extent);
+    if (jump) {
+        zwlr_virtual_pointer_v1_motion_absolute(pointer, now_ms(), x, y,
+                                                x_extent, y_extent);
+        zwlr_virtual_pointer_v1_frame(pointer);
+        send_button(pointer, btn, WL_POINTER_BUTTON_STATE_PRESSED);
+        send_button(pointer, btn, WL_POINTER_BUTTON_STATE_RELEASED);
+        wl_display_roundtrip(display);
+    } else if (!button_only) {
+        move_to(display, pointer, x, y, x_extent, y_extent);
+    }
 
     if (click) {
         sleep_ms(50);
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
-                                       WL_POINTER_BUTTON_STATE_PRESSED);
-        zwlr_virtual_pointer_v1_frame(pointer);
+        send_button(pointer, btn, WL_POINTER_BUTTON_STATE_PRESSED);
         wl_display_roundtrip(display);
         sleep_ms(50);
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
-                                       WL_POINTER_BUTTON_STATE_RELEASED);
-        zwlr_virtual_pointer_v1_frame(pointer);
+        send_button(pointer, btn, WL_POINTER_BUTTON_STATE_RELEASED);
         wl_display_roundtrip(display);
     } else if (scroll) {
         sleep_ms(50);
@@ -170,16 +184,12 @@ int main(int argc, char *argv[]) {
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
     } else if (drag) {
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
-                                       WL_POINTER_BUTTON_STATE_PRESSED);
-        zwlr_virtual_pointer_v1_frame(pointer);
+        send_button(pointer, btn, WL_POINTER_BUTTON_STATE_PRESSED);
         wl_display_roundtrip(display);
         move_to(display, pointer, (uint32_t)strtoul(argv[4], NULL, 10),
                 (uint32_t)strtoul(argv[5], NULL, 10), x_extent, y_extent);
         sleep_ms(strtol(argv[8], NULL, 10));
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
-                                       WL_POINTER_BUTTON_STATE_RELEASED);
-        zwlr_virtual_pointer_v1_frame(pointer);
+        send_button(pointer, btn, WL_POINTER_BUTTON_STATE_RELEASED);
         wl_display_roundtrip(display);
     }
 

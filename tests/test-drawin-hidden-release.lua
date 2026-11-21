@@ -28,14 +28,17 @@ runner.run_async(function()
     local s=screen[1]
     local bar,margin,leaf,counts=make_bar(s,'bottom')
     async.sleep(0.2)
-    awful.spawn{pointer,'click',tostring(bar.x+10),tostring(bar.y+10),'1280','720','left'}
-    async.sleep(0.15)
-    assert(counts.presses==1)
+    -- The button is held for 400 ms after the press, so the release comes
+    -- after the bar is hidden whatever the pointer client's own delays are.
+    local x,y=tostring(bar.x+10),tostring(bar.y+10)
+    awful.spawn{pointer,'drag',x,y,x,y,'1280','720','400','left'}
+    assert(async.wait_for_condition(function() return counts.presses==1 end,3,0.02),
+        'the press did not reach the bar')
     bar.visible=false
     bar,margin,leaf=nil,nil,nil
     collectgarbage('collect')
     collectgarbage('collect')
-    async.sleep(0.3)
+    async.sleep(0.7)
     assert(counts.releases==0,'a release reached the hidden bar')
 
     local top,_,_,top_counts=make_bar(s,'top')

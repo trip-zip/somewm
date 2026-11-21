@@ -932,6 +932,18 @@ declare_hit_at(double lx, double ly, struct declare_hit *out)
 			return;
 }
 
+bool
+declare_surface_coords(struct wlr_surface *surface, double lx, double ly,
+        double *sx, double *sy)
+{
+    Monitor *m;
+    wl_list_for_each(m, &mons, link)
+        if (m->declare && render_surface_coords(m->declare->band.render, &client_hooks,
+                surface, lx - m->m.x, ly - m->m.y, sx, sy))
+            return true;
+    return false;
+}
+
 static Clay_Color
 clay_color(const float rgba[4])
 {

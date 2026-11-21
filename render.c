@@ -2343,6 +2343,45 @@ bool render_hit(struct render_state *rs, double x, double y,
 	return false;
 }
 
+struct surface_offset {
+    struct wlr_surface *surface;
+    int x, y;
+    bool found;
+};
+
+static void surface_offset_find(struct wlr_surface *surface, int x, int y, void *data) {
+    struct surface_offset *offset = data;
+    if (surface != offset->surface) return;
+    offset->x = x;
+    offset->y = y;
+    offset->found = true;
+}
+
+bool render_surface_coords(struct render_state *rs,
+        const struct render_client_hooks *hooks, struct wlr_surface *surface,
+        double x, double y, double *sx, double *sy) {
+    if (!rs || !rs->enabled || !hooks || !hooks->resolve || !surface || !surface->mapped)
+        return false;
+    struct wlr_surface *root = wlr_surface_get_root_surface(surface);
+    if (!root) return false;
+    struct surface_offset offset = {.surface = surface};
+    wlr_surface_for_each_surface(root, surface_offset_find, &offset);
+    if (!offset.found) return false;
+
+    for (size_t i = rs->order_len; i > 0; i--) {
+        size_t idx = rmap_get(rs, rs->order[i - 1]);
+        if (idx == SIZE_MAX) continue;
+        struct rnode *n = &rs->nodes[idx];
+        if (!n->borrowed || n->retained || hooks->resolve(hooks->data, n->handle) != root)
+            continue;
+        if (!render_unpresent(n->presentation, &x, &y)) return false;
+        *sx = x - n->box.x + n->surface_origin.x - offset.x;
+        *sy = y - n->box.y + n->surface_origin.y - offset.y;
+        return true;
+    }
+    return false;
+}
+
 void render_walk(struct render_state *rs,
 		const struct render_client_hooks *hooks,
 		void (*fn)(void *user, const struct render_node_view *view),

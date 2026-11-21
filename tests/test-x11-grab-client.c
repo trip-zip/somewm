@@ -16,8 +16,12 @@
  * window must not produce FOCUS_OUT, which is what makes Xwayland tear the
  * grab down.
  *
- * Usage: test-x11-grab-client <marker-path> <wm-class> <x> <y> <w> <h> [no-grab]
+ * Usage: test-x11-grab-client <marker-path> <wm-class> <x> <y> <w> <h> [no-grab|override|menu]
  * With no-grab, paint the window and wait for events without grabbing.
+ * With override, do the same in an override-redirect window. With menu, the
+ * override-redirect window also has the type _NET_WM_WINDOW_TYPE_POPUP_MENU,
+ * which marks it as a window that does not want keyboard focus. Every mode
+ * logs MAP when the window is mapped.
  *
  * The window is created at the given box. It must match where the compositor
  * places the client and avoid the X pointer's resting position: a window that
@@ -73,8 +77,12 @@ static xcb_cursor_t blank_cursor(xcb_connection_t *conn, xcb_screen_t *screen) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 7 && !(argc == 8 && strcmp(argv[7], "no-grab") == 0)) {
-        fprintf(stderr, "Usage: %s <marker-path> <wm-class> <x> <y> <w> <h> [no-grab]\n",
+    const char *mode = argc == 8 ? argv[7] : "grab";
+    int menu = strcmp(mode, "menu") == 0;
+    int override = menu || strcmp(mode, "override") == 0;
+    int grab = argc == 7;
+    if (!grab && !override && (argc != 8 || strcmp(mode, "no-grab") != 0)) {
+        fprintf(stderr, "Usage: %s <marker-path> <wm-class> <x> <y> <w> <h> [no-grab|override|menu]\n",
                 argv[0]);
         return 1;
     }
@@ -96,6 +104,7 @@ int main(int argc, char *argv[]) {
     xcb_window_t win = xcb_generate_id(conn);
     uint32_t values[] = {
         screen->white_pixel,
+        override,
         XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
             | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_BUTTON_PRESS
             | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_ENTER_WINDOW,
@@ -103,7 +112,8 @@ int main(int argc, char *argv[]) {
     xcb_create_window(conn, XCB_COPY_FROM_PARENT, win, screen->root,
                       x, y, w, h, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                       screen->root_visual,
-                      XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK, values);
+                      XCB_CW_BACK_PIXEL | XCB_CW_OVERRIDE_REDIRECT
+                          | XCB_CW_EVENT_MASK, values);
 
     /* WM_CLASS is "instance\0class\0"; the test finds the client by class. */
     char class_prop[256];
@@ -131,6 +141,18 @@ int main(int argc, char *argv[]) {
                         XCB_ATOM_WM_NORMAL_HINTS, XCB_ATOM_WM_SIZE_HINTS,
                         32, 18, size_hints);
 
+    if (menu) {
+        xcb_intern_atom_reply_t *type = xcb_intern_atom_reply(conn,
+            xcb_intern_atom(conn, 0, 19, "_NET_WM_WINDOW_TYPE"), NULL);
+        xcb_intern_atom_reply_t *popup = xcb_intern_atom_reply(conn,
+            xcb_intern_atom(conn, 0, 30, "_NET_WM_WINDOW_TYPE_POPUP_MENU"), NULL);
+        if (type && popup)
+            xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, type->atom,
+                                XCB_ATOM_ATOM, 32, 1, &popup->atom);
+        free(type);
+        free(popup);
+    }
+
     xcb_gcontext_t gc = xcb_generate_id(conn);
     uint32_t gc_values[] = { screen->white_pixel };
     xcb_create_gc(conn, gc, win, XCB_GC_FOREGROUND, gc_values);
@@ -150,9 +172,12 @@ int main(int argc, char *argv[]) {
             xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
             break;
         }
+        case XCB_MAP_NOTIFY:
+            log_line("MAP");
+            break;
         case XCB_ENTER_NOTIFY:
             log_line("ENTER");
-            if (argc == 7 && !grabbed)
+            if (grab && !grabbed)
                 grabbed = try_grab(conn, win, cursor);
             break;
         case XCB_FOCUS_IN: {
