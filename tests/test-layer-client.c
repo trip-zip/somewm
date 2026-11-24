@@ -5,6 +5,7 @@
  * Unlike wofi, this starts instantly and behaves deterministically.
  *
  * Usage: test-layer-client [--namespace NAME] [--keyboard exclusive|on_demand|none]
+ *                          [--inhibit-shortcuts]
  */
 
 #include <errno.h>
@@ -18,6 +19,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <wayland-client.h>
+#include "keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h"
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
@@ -53,6 +55,10 @@ static struct zwp_locked_pointer_v1 *g_lock;
 static struct zwp_confined_pointer_v1 *g_confine;
 static const char *g_constraint_mode;
 static const char *g_constraint_marker;
+
+static bool g_inhibit_shortcuts;
+static struct zwp_keyboard_shortcuts_inhibit_manager_v1 *g_inhibit_manager;
+static struct zwp_keyboard_shortcuts_inhibitor_v1 *g_inhibitor;
 
 static void constraint_event(const char *event) {
     if (!g_constraint_marker) return;
@@ -334,6 +340,9 @@ static void registry_global(void *data, struct wl_registry *reg,
     } else if (strcmp(interface, zwp_pointer_constraints_v1_interface.name) == 0) {
         g_constraints = wl_registry_bind(reg, name,
             &zwp_pointer_constraints_v1_interface, 1);
+    } else if (strcmp(interface, zwp_keyboard_shortcuts_inhibit_manager_v1_interface.name) == 0) {
+        g_inhibit_manager = wl_registry_bind(reg, name,
+            &zwp_keyboard_shortcuts_inhibit_manager_v1_interface, 1);
     } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
         /* Use version 1 - we don't need any v2+ features */
         uint32_t bind_version = version < 1 ? version : 1;
@@ -359,6 +368,7 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "                        (default: exclusive)\n");
     fprintf(stderr, "  --constrain MODE      Persistent pointer constraint: lock|confine\n");
     fprintf(stderr, "  --constraint-marker P Append constraint events to P\n");
+    fprintf(stderr, "  --inhibit-shortcuts   Inhibit compositor shortcuts before the first commit\n");
     fprintf(stderr, "  SIGUSR1 drops keyboard interactivity. SIGUSR2 requests exclusive.\n");
     fprintf(stderr, "  --pointer-marker PATH Write \"entered\\n\" to PATH on wl_pointer.enter\n");
     fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
@@ -395,6 +405,8 @@ int main(int argc, char *argv[]) {
                 print_usage(argv[0]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--inhibit-shortcuts") == 0) {
+            g_inhibit_shortcuts = true;
         } else if (strcmp(argv[i], "--constraint-marker") == 0 && i + 1 < argc) {
             g_constraint_marker = argv[++i];
         } else if (strcmp(argv[i], "--color") == 0 && i + 1 < argc) {
@@ -478,9 +490,18 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Missing required Wayland globals\n");
         return 1;
     }
+    if (g_inhibit_shortcuts && (!g_inhibit_manager || !g_seat)) {
+        fprintf(stderr, "Missing zwp_keyboard_shortcuts_inhibit_manager_v1 or wl_seat\n");
+        return 1;
+    }
 
     /* Create surface */
     g_surface = wl_compositor_create_surface(g_compositor);
+    /* Before the first commit: no Lua property shows an inhibitor, so it must
+     * exist by the time the surface can take keyboard focus. */
+    if (g_inhibit_shortcuts)
+        g_inhibitor = zwp_keyboard_shortcuts_inhibit_manager_v1_inhibit_shortcuts(
+            g_inhibit_manager, g_surface, g_seat);
 
     /* Create layer surface */
     g_layer_surface = zwlr_layer_shell_v1_get_layer_surface(
@@ -540,6 +561,8 @@ int main(int argc, char *argv[]) {
     if (g_lock) zwp_locked_pointer_v1_destroy(g_lock);
     if (g_confine) zwp_confined_pointer_v1_destroy(g_confine);
     if (g_constraints) zwp_pointer_constraints_v1_destroy(g_constraints);
+    if (g_inhibitor) zwp_keyboard_shortcuts_inhibitor_v1_destroy(g_inhibitor);
+    if (g_inhibit_manager) zwp_keyboard_shortcuts_inhibit_manager_v1_destroy(g_inhibit_manager);
 
     /* Cleanup */
     if (g_layer_surface) zwlr_layer_surface_v1_destroy(g_layer_surface);
