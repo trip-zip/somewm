@@ -5,10 +5,16 @@
  *
  * - Prints "locked" on stdout when the compositor confirms the lock
  * - Prints "surface <n>" on stdout for each output it has committed
+ * - Prints "keyboard enter" / "keyboard leave" as its surfaces gain and lose
+ *   keyboard focus
  * - On SIGUSR1 (or --unlock): sends unlock_and_destroy and exits
  * - On SIGTERM: exits without unlocking, the failed-client path
  *
- * Usage: test-session-lock-client [--unlock]
+ * --eager requests the lock surfaces in the same flush as the lock, before
+ * `locked` arrives (Quickshell does this); by default they follow `locked`
+ * (swaylock does this).
+ *
+ * Usage: test-session-lock-client [--unlock] [--eager]
  */
 
 #include <errno.h>
@@ -29,6 +35,8 @@ static struct wl_display *g_display;
 static struct wl_registry *g_registry;
 static struct wl_compositor *g_compositor;
 static struct wl_shm *g_shm;
+static struct wl_seat *g_seat;
+static struct wl_keyboard *g_keyboard;
 static struct ext_session_lock_manager_v1 *g_manager;
 static struct ext_session_lock_v1 *g_lock;
 
@@ -45,6 +53,7 @@ static struct lock_output g_lock_outputs[MAX_OUTPUTS];
 static bool g_running = true;
 static bool g_unlock = false;
 static bool g_locked = false;
+static bool g_eager = false;
 
 static void handle_sigterm(int sig) {
     (void)sig;
@@ -136,7 +145,8 @@ static void lock_locked(void *data, struct ext_session_lock_v1 *lock) {
     g_locked = true;
     printf("locked\n");
     fflush(stdout);
-    create_lock_surfaces();
+    if (!g_eager)
+        create_lock_surfaces();
 }
 
 static void lock_finished(void *data, struct ext_session_lock_v1 *lock) {
@@ -150,6 +160,69 @@ static const struct ext_session_lock_v1_listener lock_listener = {
     .finished = lock_finished,
 };
 
+static void keyboard_keymap(void *data, struct wl_keyboard *kb,
+        uint32_t format, int32_t fd, uint32_t size) {
+    (void)data; (void)kb; (void)format; (void)size;
+    close(fd);
+}
+
+static void keyboard_enter(void *data, struct wl_keyboard *kb, uint32_t serial,
+        struct wl_surface *surface, struct wl_array *keys) {
+    (void)data; (void)kb; (void)serial; (void)surface; (void)keys;
+    printf("keyboard enter\n");
+    fflush(stdout);
+}
+
+static void keyboard_leave(void *data, struct wl_keyboard *kb, uint32_t serial,
+        struct wl_surface *surface) {
+    (void)data; (void)kb; (void)serial; (void)surface;
+    printf("keyboard leave\n");
+    fflush(stdout);
+}
+
+static void keyboard_key(void *data, struct wl_keyboard *kb, uint32_t serial,
+        uint32_t time, uint32_t key, uint32_t state) {
+    (void)data; (void)kb; (void)serial; (void)time; (void)key; (void)state;
+}
+
+static void keyboard_modifiers(void *data, struct wl_keyboard *kb,
+        uint32_t serial, uint32_t depressed, uint32_t latched, uint32_t locked,
+        uint32_t group) {
+    (void)data; (void)kb; (void)serial; (void)depressed; (void)latched;
+    (void)locked; (void)group;
+}
+
+static void keyboard_repeat_info(void *data, struct wl_keyboard *kb,
+        int32_t rate, int32_t delay) {
+    (void)data; (void)kb; (void)rate; (void)delay;
+}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+    .keymap = keyboard_keymap,
+    .enter = keyboard_enter,
+    .leave = keyboard_leave,
+    .key = keyboard_key,
+    .modifiers = keyboard_modifiers,
+    .repeat_info = keyboard_repeat_info,
+};
+
+static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
+    (void)data;
+    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !g_keyboard) {
+        g_keyboard = wl_seat_get_keyboard(seat);
+        wl_keyboard_add_listener(g_keyboard, &keyboard_listener, NULL);
+    }
+}
+
+static void seat_name(void *data, struct wl_seat *seat, const char *name) {
+    (void)data; (void)seat; (void)name;
+}
+
+static const struct wl_seat_listener seat_listener = {
+    .capabilities = seat_capabilities,
+    .name = seat_name,
+};
+
 static void registry_global(void *data, struct wl_registry *registry,
         uint32_t name, const char *interface, uint32_t version) {
     (void)data; (void)version;
@@ -158,6 +231,9 @@ static void registry_global(void *data, struct wl_registry *registry,
             &wl_compositor_interface, 4);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         g_shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0 && !g_seat) {
+        g_seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+        wl_seat_add_listener(g_seat, &seat_listener, NULL);
     } else if (strcmp(interface, wl_output_interface.name) == 0) {
         if (g_output_count < MAX_OUTPUTS)
             g_outputs[g_output_count++] = wl_registry_bind(registry, name,
@@ -185,6 +261,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], "--unlock") == 0)
             unlock_on_term = true;
+        else if (strcmp(argv[i], "--eager") == 0)
+            g_eager = true;
 
     signal(SIGTERM, handle_sigterm);
     signal(SIGINT, handle_sigterm);
@@ -209,7 +287,10 @@ int main(int argc, char **argv) {
 
     g_lock = ext_session_lock_manager_v1_lock(g_manager);
     ext_session_lock_v1_add_listener(g_lock, &lock_listener, NULL);
-    wl_display_flush(g_display);
+    if (g_eager)
+        create_lock_surfaces(); /* flushes the lock with them */
+    else
+        wl_display_flush(g_display);
 
     while (g_running) {
         if (g_unlock)

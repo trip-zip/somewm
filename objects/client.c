@@ -2163,8 +2163,12 @@ client_focus_refresh(void)
         return;
 
     /* Only action needed: clear keyboard focus if no client is focused
-     * BUT don't clear if a layer surface has exclusive focus (e.g., rofi) */
-    if(!globalconf.focus.client && !some_has_exclusive_focus())
+     * BUT don't clear if a layer surface has exclusive focus (e.g., rofi),
+     * or while locked: locksession() unfocuses the client (setting need_update)
+     * and the lock surface may get keyboard focus before this runs, as when a
+     * client sends lock and get_lock_surface together (Quickshell). Lock and
+     * unlock manage seat focus themselves. */
+    if(!globalconf.focus.client && !some_has_exclusive_focus() && !session_is_locked())
     {
         seat = some_get_seat();
         wlr_seat_keyboard_notify_clear_focus(seat);
