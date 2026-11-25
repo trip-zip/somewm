@@ -5,6 +5,7 @@
  * Unlike wofi, this starts instantly and behaves deterministically.
  *
  * Usage: test-layer-client [--namespace NAME] [--keyboard exclusive|on_demand|none]
+ *                          [--inhibit-shortcuts]
  */
 
 #include <signal.h>
@@ -15,6 +16,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <wayland-client.h>
+#include "keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 /* Globals */
@@ -28,6 +30,10 @@ static struct wl_pointer *g_pointer;
 static struct zwlr_layer_shell_v1 *g_layer_shell;
 static struct wl_surface *g_surface;
 static struct zwlr_layer_surface_v1 *g_layer_surface;
+
+static bool g_inhibit_shortcuts;
+static struct zwp_keyboard_shortcuts_inhibit_manager_v1 *g_inhibit_manager;
+static struct zwp_keyboard_shortcuts_inhibitor_v1 *g_inhibitor;
 
 static bool g_running = true;
 static uint32_t g_width = 100, g_height = 100;
@@ -265,6 +271,9 @@ static void registry_global(void *data, struct wl_registry *reg,
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         g_seat = wl_registry_bind(reg, name, &wl_seat_interface, 5);
         wl_seat_add_listener(g_seat, &seat_listener, NULL);
+    } else if (strcmp(interface, zwp_keyboard_shortcuts_inhibit_manager_v1_interface.name) == 0) {
+        g_inhibit_manager = wl_registry_bind(reg, name,
+            &zwp_keyboard_shortcuts_inhibit_manager_v1_interface, 1);
     } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
         /* Use version 1 - we don't need any v2+ features */
         uint32_t bind_version = version < 1 ? version : 1;
@@ -288,6 +297,7 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --namespace NAME      Layer surface namespace (default: test-layer)\n");
     fprintf(stderr, "  --keyboard MODE       Keyboard interactivity: exclusive|on_demand|none\n");
     fprintf(stderr, "                        (default: exclusive)\n");
+    fprintf(stderr, "  --inhibit-shortcuts   Inhibit compositor shortcuts before the first commit\n");
     fprintf(stderr, "  --pointer-marker PATH Write \"entered\\n\" to PATH on wl_pointer.enter\n");
     fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
     fprintf(stderr, "                        (default: unanchored; compositor chooses position)\n");
@@ -311,6 +321,8 @@ int main(int argc, char *argv[]) {
                 print_usage(argv[0]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--inhibit-shortcuts") == 0) {
+            g_inhibit_shortcuts = true;
         } else if (strcmp(argv[i], "--pointer-marker") == 0 && i + 1 < argc) {
             g_pointer_marker = argv[++i];
         } else if (strcmp(argv[i], "--anchor") == 0 && i + 1 < argc) {
@@ -363,9 +375,18 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Missing required Wayland globals\n");
         return 1;
     }
+    if (g_inhibit_shortcuts && (!g_inhibit_manager || !g_seat)) {
+        fprintf(stderr, "Missing zwp_keyboard_shortcuts_inhibit_manager_v1 or wl_seat\n");
+        return 1;
+    }
 
     /* Create surface */
     g_surface = wl_compositor_create_surface(g_compositor);
+    /* Before the first commit: no Lua property shows an inhibitor, so it must
+     * exist by the time the surface can take keyboard focus. */
+    if (g_inhibit_shortcuts)
+        g_inhibitor = zwp_keyboard_shortcuts_inhibit_manager_v1_inhibit_shortcuts(
+            g_inhibit_manager, g_surface, g_seat);
 
     /* Create layer surface */
     g_layer_surface = zwlr_layer_shell_v1_get_layer_surface(
@@ -393,6 +414,8 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "[test-layer-client] shutting down\n");
 
     /* Cleanup */
+    if (g_inhibitor) zwp_keyboard_shortcuts_inhibitor_v1_destroy(g_inhibitor);
+    if (g_inhibit_manager) zwp_keyboard_shortcuts_inhibit_manager_v1_destroy(g_inhibit_manager);
     if (g_layer_surface) zwlr_layer_surface_v1_destroy(g_layer_surface);
     if (g_surface) wl_surface_destroy(g_surface);
     if (g_keyboard) wl_keyboard_destroy(g_keyboard);
