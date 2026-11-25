@@ -359,6 +359,20 @@ virtual_pointer_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+virtual_keyboard_client_header = custom_target(
+  'virtual-keyboard-unstable-v1-client-protocol.h',
+  input: 'protocols/virtual-keyboard-unstable-v1.xml',
+  output: 'virtual-keyboard-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+virtual_keyboard_client_code = custom_target(
+  'virtual-keyboard-unstable-v1-client-protocol.c',
+  input: 'protocols/virtual-keyboard-unstable-v1.xml',
+  output: 'virtual-keyboard-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # idle-inhibit client protocol (header + code) for the idle-inhibitor test client
 idle_inhibit_client_header = custom_target(
   'idle-inhibit-unstable-v1-client-protocol.h',
@@ -551,8 +565,9 @@ somewm_client = executable(
 # Test layer-shell client for deterministic integration tests
 test_layer_client = executable(
   'test-layer-client',
-  ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code],
-  layer_shell_client_header,
+  ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code,
+   keyboard_shortcuts_inhibit_client_code],
+  layer_shell_client_header, keyboard_shortcuts_inhibit_client_header,
   dependencies: [wayland_client],
   install: false,
 )
@@ -660,6 +675,16 @@ test_virtual_pointer_client = executable(
   ['tests/test-virtual-pointer-client.c', virtual_pointer_client_code],
   virtual_pointer_client_header,
   dependencies: [wayland_client],
+  install: false,
+)
+
+# Presses one key combo through zwp_virtual_keyboard_v1, so it reaches
+# keybinding() (root.fake_input bypasses it).
+test_virtual_keyboard_client = executable(
+  'test-virtual-keyboard-client',
+  ['tests/test-virtual-keyboard-client.c', virtual_keyboard_client_code],
+  virtual_keyboard_client_header,
+  dependencies: [wayland_client, xkbcommon],
   install: false,
 )
 
