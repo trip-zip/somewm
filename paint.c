@@ -415,7 +415,10 @@ void paint_shadow(struct paint *p, const struct paint_shadow_params *params) {
 
 bool paint_end(struct paint *p) {
     if (!p || !p->active) return false;
-    glFlush();
+    /* A caller may hand this target to the display with no fence. NVIDIA has
+     * no implicit sync, so the display can show the frame before the GPU
+     * finishes it. Wait for the GPU. */
+    glFinish();
     if (p->reset_status && p->reset_status() != GL_NO_ERROR) p->lost = true;
     bool gl_failed = errors();
     p->active = false;

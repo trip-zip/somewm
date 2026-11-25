@@ -84,7 +84,8 @@ void paint_clear(struct paint *p, struct paint_color color);
 void paint_rect(struct paint *p, const struct paint_rect_params *params);
 void paint_texture(struct paint *p, const struct paint_texture_params *params);
 void paint_shadow(struct paint *p, const struct paint_shadow_params *params);
-/* Flushes and checks reset status and errors. False invalidates the frame. */
+/* Waits for the GPU, then checks reset status and errors. False invalidates
+ * the frame. */
 bool paint_end(struct paint *p);
 
 /* Native-endian ARGB32, premultiplied, top-down rows, stride in bytes.
