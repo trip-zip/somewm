@@ -528,7 +528,7 @@ function widget.new(args)
                     end)
                     local first, last, count, tally = nil, nil, 0, {}
                     for _, k in ipairs(params.keylist) do
-                        local i = gtable.hasitem(self._keygroups[keygroup], k)
+                        local i = keygroup and gtable.hasitem(self._keygroups[keygroup], k)
                         if i and not tally[i] then
                             tally[i] = k
                             if (not first) or (i < first) then first = i end

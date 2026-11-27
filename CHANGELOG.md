@@ -47,6 +47,9 @@ All notable changes to somewm will be documented in this file.
 - Notifications no longer cover a wibar on the same screen edge.
 - Releasing a mouse button over a wibox or a root binding no longer leaves the button held, which made later clicks do nothing.
 - Pointer lock and confinement work on layer-shell surfaces, and a layer surface that gives up the keyboard can get it back.
+- The hotkeys popup names keygroup keys by their symbol, `Super+1/2/3` instead of `Super+#10/#11/#12`.
+- `awful.keyboard.get_key_name` names a `#keycode` key and a digit key such as `"1"` by its symbol.
+- The hotkeys popup opens when five or more keys outside a keygroup share one description.
 
 ## [2.1.2] - 2026-11-06
 

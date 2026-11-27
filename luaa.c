@@ -559,11 +559,18 @@ luaA_awesome_get_key_name(lua_State *L)
 	char keysym_name[64];
 	char utf8[8] = {0};
 
-	if (lua_isnumber(L, 1)) {
+	if (lua_type(L, 1) == LUA_TNUMBER) {
 		keysym = (xkb_keysym_t)lua_tonumber(L, 1);
 	} else if (lua_isstring(L, 1)) {
 		const char *key_str = lua_tostring(L, 1);
+		struct xkb_keymap *keymap = some_xkb_get_keymap();
+		const xkb_keysym_t *syms;
 		keysym = xkb_keysym_from_name(key_str, XKB_KEYSYM_CASE_INSENSITIVE);
+		/* "#keycode", the form awful.key keygroups use. The name is the
+		 * key's level 0 symbol in the first layout. */
+		if (key_str[0] == '#' && keymap && xkb_keymap_key_get_syms_by_level(
+				keymap, atoi(key_str + 1), 0, 0, &syms) > 0)
+			keysym = syms[0];
 		if (keysym == XKB_KEY_NoSymbol) {
 			lua_pushnil(L);
 			lua_pushnil(L);
